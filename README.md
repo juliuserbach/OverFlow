@@ -58,9 +58,10 @@ This project provides a small service to fetch, store, and visualize the number 
 - **Run the API server** (persists the SQLite DB under `./data`):
 
   ```bash
-  docker run --rm \
+  docker run -d \
     -p 8000:8000 \
     -v "$(pwd)/data:/data" \
+    --restart unless-stopped \
     --name pool-guest-logger \
     pool-guest-logger
   ```
@@ -68,10 +69,10 @@ This project provides a small service to fetch, store, and visualize the number 
 - **Using Docker Compose**
 
   ```bash
-  docker compose up --build
+  docker compose up --build -d
   ```
 
-  The compose file maps the database volume, exposes port `8000`, and sets a default log level. Tweak environment variables in `docker-compose.yml` as needed (e.g., target URL, API key headers).
+  The compose file maps the database volume, exposes port `8000`, enables automatic restarts (`unless-stopped`), and sets a default log level. Tweak environment variables in `docker-compose.yml` as needed (e.g., target URL, API key headers).
 
 - **Trigger a manual scrape inside the container**
 
