@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+
+# Database files
+data/*.db
+
+# pytest
+.pytest_cache/
+
+# Editor/IDE
+*.swp
+.vscode/

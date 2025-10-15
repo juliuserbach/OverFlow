@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>City Indoor Pool Guest Logger</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/milligram/1.4.1/milligram.min.css"
+      integrity="sha512-ty8ZFqOIJ2KBihLEhTZGi99ZTSdKCbFf8gDuwZQ+Q0jrISFRCGDpa2BkLomqKgJo0vvArkH5vWck/dwZ0pQf2A=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    />
+    <script
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+      integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
+      crossorigin="anonymous"
+    ></script>
+    <style>
+      body {
+        margin: 1.5rem;
+      }
+      .chart-container {
+        position: relative;
+        height: 60vh;
+      }
+      .stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+      }
+      .stats > div {
+        background-color: #f4f4f4;
+        padding: 1rem;
+        border-radius: 6px;
+        flex: 1 1 200px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Hallenbad City – Gästeauslastung</h1>
+    <p>
+      Diese Seite sammelt und visualisiert die öffentlich verfügbaren Daten über die
+      aktuelle Auslastung des Hallenbads City in Zürich. Verwenden Sie die API-Endpunkte,
+      um die Daten in Home Assistant oder einer anderen Visualisierung zu integrieren.
+    </p>
+
+    <section class="stats" id="summary"></section>
+
+    <div class="chart-container">
+      <canvas id="historyChart"></canvas>
+    </div>
+
+    <h2>API Überblick</h2>
+    <ul>
+      <li><code>GET /api/latest</code> – neuester Eintrag</li>
+      <li><code>GET /api/history?limit=200</code> – Historie der letzten Einträge</li>
+      <li><code>GET /api/daily?days=14</code> – Tagesstatistiken</li>
+      <li><code>POST /api/log</code> – neuen Wert abrufen und speichern</li>
+    </ul>
+
+    <script>
+      async function fetchJSON(url) {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Request failed: ${response.status}`);
+        }
+        return response.json();
+      }
+
+      function formatTimestamp(ts) {
+        const d = new Date(ts);
+        return d.toLocaleString();
+      }
+
+      async function loadData() {
+        try {
+          const [history, daily] = await Promise.all([
+            fetchJSON("/api/history?limit=200"),
+            fetchJSON("/api/daily?days=14"),
+          ]);
+
+          renderChart(history.reverse());
+          renderSummary(history[0], daily);
+        } catch (error) {
+          console.error(error);
+          const summary = document.getElementById("summary");
+          summary.innerHTML = `<div><strong>Fehler:</strong> ${error.message}</div>`;
+        }
+      }
+
+      function renderSummary(latest, daily) {
+        const container = document.getElementById("summary");
+        if (!latest) {
+          container.innerHTML = "<div>Keine Daten verfügbar. Führen Sie <code>POST /api/log</code> aus.</div>";
+          return;
+        }
+
+        const capacityText = latest.capacity ? `${latest.capacity}` : "unbekannt";
+        const dailyText = daily
+          .map(
+            (item) =>
+              `<li><strong>${item.date}</strong>: Schnitt ${item.average?.toFixed(1) ?? "–"}, Max ${item.max ?? "–"}`
+          )
+          .join("");
+
+        container.innerHTML = `
+          <div>
+            <h3>Letzter Messwert</h3>
+            <p><strong>${latest.count}</strong> Gäste<br />
+            Kapazität: ${capacityText}<br />
+            Zeitpunkt: ${formatTimestamp(latest.recorded_at)}</p>
+          </div>
+          <div>
+            <h3>Tagesstatistiken</h3>
+            <ul>${dailyText}</ul>
+          </div>
+        `;
+      }
+
+      function renderChart(history) {
+        if (!history.length) {
+          return;
+        }
+
+        const ctx = document.getElementById("historyChart").getContext("2d");
+        const labels = history.map((item) => formatTimestamp(item.recorded_at));
+        const counts = history.map((item) => item.count);
+        const capacity = history.map((item) => item.capacity ?? null);
+
+        new Chart(ctx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [
+              {
+                label: "Gäste",
+                data: counts,
+                fill: false,
+                borderColor: "#0074D9",
+                tension: 0.1,
+              },
+              {
+                label: "Kapazität",
+                data: capacity,
+                fill: false,
+                borderColor: "#FF4136",
+                borderDash: [5, 5],
+                tension: 0,
+              },
+            ],
+          },
+          options: {
+            scales: {
+              x: {
+                ticks: { autoSkip: true, maxTicksLimit: 10 },
+              },
+            },
+          },
+        });
+      }
+
+      loadData();
+    </script>
+  </body>
+</html>
