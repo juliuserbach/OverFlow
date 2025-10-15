@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  pool-guest-logger:
+    build: .
+    container_name: pool-guest-logger
+    ports:
+      - "8000:8000"
+    environment:
+      - POOL_LOGGER_LOG_LEVEL=INFO
+    volumes:
+      - ./data:/data
