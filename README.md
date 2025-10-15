@@ -85,7 +85,7 @@ This project provides a small service to fetch, store, and visualize the number 
 ## Home Assistant Integration
 
 - **Trigger logging on a schedule**
-  1. Define a `rest_command` that POSTs to the API:
+  1. Define a `rest_command` (e.g. in `configuration.yaml` under the top-level `rest_command:` key, or in a package file) that POSTs to the API:
 
      ```yaml
      rest_command:
@@ -97,6 +97,7 @@ This project provides a small service to fetch, store, and visualize the number 
   2. Create an automation that runs every _n_ minutes (adjust `/15` as needed):
 
      ```yaml
+     # Place under the top-level `automation:` key or in an included automations file.
      automation:
        - alias: "Log pool guests every 15 minutes"
          trigger:
@@ -107,6 +108,8 @@ This project provides a small service to fetch, store, and visualize the number 
      ```
 
 - **Expose the latest values as sensors**
+
+  Add this block under the top-level `rest:` key in your Home Assistant configuration (or equivalent package file). Reload the REST integration or restart HA after saving:
 
   ```yaml
   rest:
