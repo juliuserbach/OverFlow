@@ -9,6 +9,7 @@ class GuestLogSchema(BaseModel):
     recorded_at: dt.datetime
     count: int
     capacity: int | None
+    pool_uid: str | None
 
     class Config:
         from_attributes = True
@@ -23,6 +24,13 @@ class DailySummarySchema(BaseModel):
 
 class LogResponse(BaseModel):
     success: bool
-    count: int
-    capacity: int | None
-    recorded_at: dt.datetime
+    entries: list[GuestLogSchema]
+
+
+class PoolSchema(BaseModel):
+    uid: str
+    name: str
+    category: str | None = None
+
+    class Config:
+        from_attributes = True

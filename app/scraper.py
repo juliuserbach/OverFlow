@@ -23,6 +23,8 @@ class GuestCount:
     timestamp: dt.datetime
     count: int
     capacity: int | None = None
+    pool_uid: str | None = None
+    pool_name: str | None = None
 
 
 class GuestCountError(RuntimeError):
@@ -38,16 +40,22 @@ COUNT_ID_PATTERN = re.compile(
 )
 UID_IN_MARKUP_PATTERN = re.compile(r"(SSD-\d+)_visitornumber")
 CAPACITY_PATTERN = re.compile(r"(?:max\.?\s*)?(?:Kapazit[aä]t|von)\s*(\d+)", re.IGNORECASE)
+POOLS_TABLE_PATTERN = re.compile(
+    r'id="baederinfossummary"[^>]*rows="(?P<rows>\[\[.*?\])"', re.IGNORECASE | re.DOTALL
+)
 
 
 async def fetch_guest_count_async(client: "httpx.AsyncClient | None" = None) -> GuestCount:
-    """Fetch the guest count asynchronously.
+    """Fetch a single guest count (first available pool)."""
 
-    Parameters
-    ----------
-    client:
-        Optional shared HTTPX client, useful for testing.
-    """
+    results = await fetch_all_guest_counts_async(client=client)
+    if not results:
+        raise GuestCountError("No guest counts available")
+    return results[0]
+
+
+async def fetch_all_guest_counts_async(client: "httpx.AsyncClient | None" = None) -> list[GuestCount]:
+    """Fetch guest counts for all pools."""
 
     try:
         httpx = importlib.import_module("httpx")
@@ -72,21 +80,18 @@ async def fetch_guest_count_async(client: "httpx.AsyncClient | None" = None) -> 
         response = await async_client.get(url)
         response.raise_for_status()
         html = response.text
-        try:
-            guest_count = _parse_guest_count(html)
-            logger.info("Fetched guest count: %s", guest_count)
-            return guest_count
-        except GuestCountError as parse_exc:
-            # Attempt dynamic fallback via the WebSocket used by the site
-            uid = _extract_uid_from_html(html)
-            if not uid:
-                _maybe_dump_html_for_debug(html)
-                raise
-            logger.debug("Falling back to WebSocket for uid=%s", uid)
-            count, capacity = await _fetch_count_via_websocket(uid)
-            result = GuestCount(timestamp=dt.datetime.now(dt.timezone.utc), count=count, capacity=capacity)
-            logger.info("Fetched guest count via WebSocket: %s", result)
-            return result
+
+        pools = _extract_pools_from_html(html)
+        if not pools:
+            _maybe_dump_html_for_debug(html)
+            raise GuestCountError("Could not find pools in page")
+
+        counts = await _fetch_counts_via_websocket(pools)
+        if not counts:
+            raise GuestCountError("Could not find guest counts in WebSocket stream")
+
+        logger.info("Fetched guest counts for %s pools", len(counts))
+        return counts
     except httpx.HTTPError as exc:  # pragma: no cover - network errors
         logger.exception("HTTP error while fetching guest count")
         raise GuestCountError("Failed to fetch guest count") from exc
@@ -101,35 +106,13 @@ def fetch_guest_count() -> GuestCount:
     return asyncio.run(fetch_guest_count_async())
 
 
-def _parse_guest_count(html: str) -> GuestCount:
-    """Extract the guest count (and optionally capacity) from the page HTML."""
-
-    text = _extract_visible_text(html)
-
-    html_match = COUNT_ID_PATTERN.search(html)
-    if html_match:
-        logger.debug("Matched COUNT_ID_PATTERN in HTML")
-        count = int(html_match.group(1))
-        start_idx = text.find(str(count))
-        if start_idx != -1:
-            text_slice = text[start_idx: start_idx + 100]
-        else:
-            text_slice = text
-    else:
-        logger.debug("COUNT_ID_PATTERN not found; trying text-based pattern")
-        text_match = COUNT_PATTERN.search(text)
-        if not text_match:
-            raise GuestCountError("Could not find guest count in page")
-        count = int(text_match.group(1))
-        text_slice = text[text_match.end() : text_match.end() + 100]
-
-    capacity_match = CAPACITY_PATTERN.search(text_slice)
-    capacity = int(capacity_match.group(1)) if capacity_match else None
-
-    return GuestCount(timestamp=dt.datetime.now(dt.timezone.utc), count=count, capacity=capacity)
-
-
-__all__ = ["GuestCount", "GuestCountError", "fetch_guest_count", "fetch_guest_count_async"]
+__all__ = [
+    "GuestCount",
+    "GuestCountError",
+    "fetch_guest_count",
+    "fetch_guest_count_async",
+    "fetch_all_guest_counts_async",
+]
 
 
 def _extract_visible_text(html: str) -> str:
@@ -234,3 +217,55 @@ async def _fetch_count_via_websocket(uid: str) -> tuple[int, int | None]:
         raise GuestCountError("Failed to fetch guest count via WebSocket") from exc
 
     raise GuestCountError("Could not find guest count in WebSocket stream")
+
+
+def _extract_pools_from_html(html: str) -> dict[str, str]:
+    """Return mapping of pool uid -> pool name from the summary table markup."""
+
+    m = POOLS_TABLE_PATTERN.search(html)
+    if not m:
+        return {}
+
+    import json
+
+    raw = m.group("rows").replace("&#34;", '"')
+    try:
+        rows = json.loads(raw)
+    except Exception:
+        return {}
+
+    pools: dict[str, str] = {}
+    for row in rows:
+        try:
+            name_html = row[0]["value"]
+            uid = row[1]["id"]
+        except Exception:
+            continue
+        name = _strip_tags(unescape(name_html))
+        pools[uid] = name
+    return pools
+
+
+def _strip_tags(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text).strip()
+
+
+async def _fetch_counts_via_websocket(pools: dict[str, str]) -> list[GuestCount]:
+    """Fetch counts for all pools via one WebSocket call."""
+
+    results: list[GuestCount] = []
+    for uid, name in pools.items():
+        try:
+            count, capacity = await _fetch_count_via_websocket(uid)
+        except GuestCountError:
+            continue
+        results.append(
+            GuestCount(
+                timestamp=dt.datetime.now(dt.timezone.utc),
+                count=count,
+                capacity=capacity,
+                pool_uid=uid,
+                pool_name=name,
+            )
+        )
+    return results

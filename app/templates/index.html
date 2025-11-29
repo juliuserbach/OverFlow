@@ -47,6 +47,9 @@
 
     <section class="stats" id="summary"></section>
 
+    <label for="poolSelect"><strong>Pool auswählen:</strong></label>
+    <select id="poolSelect"></select>
+
     <div class="chart-container">
       <canvas id="historyChart"></canvas>
     </div>
@@ -73,11 +76,12 @@
         return d.toLocaleString();
       }
 
-      async function loadData() {
+      async function loadData(poolUid) {
         try {
+          const poolParam = poolUid ? `&pool=${encodeURIComponent(poolUid)}` : "";
           const [history, daily] = await Promise.all([
-            fetchJSON("/api/history?limit=200"),
-            fetchJSON("/api/daily?days=14"),
+            fetchJSON(`/api/history?limit=200${poolParam}`),
+            fetchJSON(`/api/daily?days=14${poolParam}`),
           ]);
 
           renderChart(history.reverse());
@@ -106,7 +110,7 @@
 
         container.innerHTML = `
           <div>
-            <h3>Letzter Messwert</h3>
+            <h3>Letzter Messwert (${latest.pool_uid ?? "?"})</h3>
             <p><strong>${latest.count}</strong> Gäste<br />
             Kapazität: ${capacityText}<br />
             Zeitpunkt: ${formatTimestamp(latest.recorded_at)}</p>
@@ -160,7 +164,23 @@
         });
       }
 
-      loadData();
+      async function init() {
+        try {
+          const pools = await fetchJSON("/api/pools");
+          const select = document.getElementById("poolSelect");
+          select.innerHTML = pools
+            .map((p) => `<option value="${p.uid}">${p.name}</option>`)
+            .join("");
+          select.addEventListener("change", () => loadData(select.value));
+          const first = pools[0]?.uid;
+          await loadData(first);
+        } catch (error) {
+          console.error(error);
+          await loadData();
+        }
+      }
+
+      init();
     </script>
   </body>
 </html>

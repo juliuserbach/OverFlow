@@ -5,7 +5,7 @@ from pathlib import Path
 
 DEFAULT_TARGET_URL = (
     "https://www.stadt-zuerich.ch/de/stadtleben/sport-und-erholung/"
-    "sport-und-badeanlagen/hallenbaeder/city.html"
+    "sport-und-badeanlagen/sommerbaeder/badi-aktuell.html"
 )
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "

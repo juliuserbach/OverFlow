@@ -8,11 +8,11 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from . import crud
-from .database import SessionLocal, Base, ENGINE
-from .schemas import DailySummarySchema, GuestLogSchema, LogResponse
-from .scraper import GuestCountError, fetch_guest_count_async
+from .database import SessionLocal, ensure_schema
+from .schemas import DailySummarySchema, GuestLogSchema, LogResponse, PoolSchema
+from .scraper import GuestCountError, fetch_all_guest_counts_async
 
-Base.metadata.create_all(bind=ENGINE)
+ensure_schema()
 
 app = FastAPI(title="City Indoor Pool Guest Logger")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -31,45 +31,54 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/api/pools", response_model=list[PoolSchema])
+async def api_pools(session=Depends(get_session)):
+    return crud.list_pools(session)
+
+
 @app.get("/api/latest", response_model=GuestLogSchema | None)
-async def api_latest(session=Depends(get_session)):
+async def api_latest(pool: str | None = None, session=Depends(get_session)):
+    if pool:
+        return crud.get_latest_for_pool(session, pool_uid=pool)
     return crud.get_latest(session)
 
 
 @app.get("/api/history", response_model=list[GuestLogSchema])
-async def api_history(limit: int = 100, session=Depends(get_session)):
+async def api_history(limit: int = 100, pool: str | None = None, session=Depends(get_session)):
     limit = max(1, min(limit, 1000))
-    return crud.list_entries(session, limit=limit)
+    return crud.list_entries(session, limit=limit, pool_uid=pool)
 
 
 @app.get("/api/daily", response_model=list[DailySummarySchema])
-async def api_daily(days: int = 7, session=Depends(get_session)):
+async def api_daily(days: int = 7, pool: str | None = None, session=Depends(get_session)):
     days = max(1, min(days, 90))
-    return crud.daily_summary(session, days=days)
+    return crud.daily_summary(session, days=days, pool_uid=pool)
 
 
 @app.post("/api/log", response_model=LogResponse)
 async def api_log(session=Depends(get_session)):
     try:
-        guest_count = await fetch_guest_count_async()
+        guest_counts = await fetch_all_guest_counts_async()
     except GuestCountError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    entry = crud.log_guest_count(
-        session,
-        timestamp=guest_count.timestamp,
-        count=guest_count.count,
-        capacity=guest_count.capacity,
-    )
+    entries: list = []
+    for item in guest_counts:
+        if item.pool_uid and item.pool_name:
+            crud.upsert_pool(session, uid=item.pool_uid, name=item.pool_name)
+        entry = crud.log_guest_count(
+            session,
+            pool_uid=item.pool_uid,
+            timestamp=item.timestamp,
+            count=item.count,
+            capacity=item.capacity,
+        )
+        entries.append(entry)
     session.commit()
-    session.refresh(entry)
+    for entry in entries:
+        session.refresh(entry)
 
-    return LogResponse(
-        success=True,
-        count=entry.count,
-        capacity=entry.capacity,
-        recorded_at=entry.recorded_at,
-    )
+    return LogResponse(success=True, entries=entries)
 
 
 @app.on_event("startup")
@@ -79,15 +88,19 @@ async def warmup_cache():
         with SessionLocal() as session:
             if crud.get_latest(session) is None:
                 try:
-                    guest_count = await fetch_guest_count_async()
+                    guest_counts = await fetch_all_guest_counts_async()
                 except GuestCountError:
                     return
-                crud.log_guest_count(
-                    session,
-                    timestamp=guest_count.timestamp,
-                    count=guest_count.count,
-                    capacity=guest_count.capacity,
-                )
+                for item in guest_counts:
+                    if item.pool_uid and item.pool_name:
+                        crud.upsert_pool(session, uid=item.pool_uid, name=item.pool_name)
+                    crud.log_guest_count(
+                        session,
+                        pool_uid=item.pool_uid,
+                        timestamp=item.timestamp,
+                        count=item.count,
+                        capacity=item.capacity,
+                    )
                 session.commit()
 
     asyncio.create_task(_ensure_latest())
