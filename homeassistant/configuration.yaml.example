@@ -1,0 +1,228 @@
+# Home Assistant configuration example for OverFlow – Pool Guest Logger
+#
+# Copy the relevant sections into your configuration.yaml (or a dedicated
+# package file) and adjust paths, pool UIDs, and resource URLs to match your
+# setup.
+#
+# Two complementary approaches are shown:
+#   1. SQL sensors  – query the SQLite database directly (no API needed)
+#   2. REST sensors – use the FastAPI endpoints (good when HA cannot access the DB file)
+#
+# Use state_class: "measurement" on every numeric sensor so that Home Assistant
+# stores long-term statistics and enables the built-in Statistics graphs.
+
+# ---------------------------------------------------------------------------
+# 1. SQL SENSORS  (requires the sql integration, built into HA Core)
+#
+# db_url uses SQLAlchemy's format.  Four slashes are needed for an absolute
+# path: sqlite:////absolute/path/to/file.db
+#
+# When running both services with Docker Compose you can mount the data
+# directory read-only into Home Assistant and use sqlite:////data/guest_logs.db
+# ---------------------------------------------------------------------------
+sql:
+  # ---- Latest guest count for pool SSD-4 ----------------------------------
+  - name: "Pool Guest Count"
+    db_url: sqlite:////data/guest_logs.db
+    # Query the most recent row for a specific pool.
+    # Replace 'SSD-4' with your pool's uid (visible in /api/pools).
+    query: >
+      SELECT count, capacity, recorded_at, pool_uid
+      FROM guest_logs
+      WHERE pool_uid = 'SSD-4'
+      ORDER BY recorded_at DESC
+      LIMIT 1
+    column: "count"
+    unit_of_measurement: "guests"
+    # measurement → goes up and down; enables long-term statistics
+    state_class: "measurement"
+    device_class: null
+    value_template: "{{ value | int(0) }}"
+
+  # ---- Current capacity for pool SSD-4 ------------------------------------
+  - name: "Pool Capacity"
+    db_url: sqlite:////data/guest_logs.db
+    query: >
+      SELECT capacity
+      FROM guest_logs
+      WHERE pool_uid = 'SSD-4'
+      ORDER BY recorded_at DESC
+      LIMIT 1
+    column: "capacity"
+    unit_of_measurement: "guests"
+    state_class: "measurement"
+    value_template: "{{ value | int(0) }}"
+
+  # ---- Occupancy percentage -----------------------------------------------
+  - name: "Pool Occupancy"
+    db_url: sqlite:////data/guest_logs.db
+    query: >
+      SELECT
+        ROUND(CAST(count AS FLOAT) / NULLIF(CAST(capacity AS FLOAT), 0) * 100, 1)
+          AS occupancy
+      FROM guest_logs
+      WHERE pool_uid = 'SSD-4'
+        AND capacity > 0
+      ORDER BY recorded_at DESC
+      LIMIT 1
+    column: "occupancy"
+    unit_of_measurement: "%"
+    state_class: "measurement"
+    value_template: "{{ value | float(0) }}"
+
+  # ---- Today's average guest count ----------------------------------------
+  - name: "Pool Average Today"
+    db_url: sqlite:////data/guest_logs.db
+    query: >
+      SELECT ROUND(AVG(count), 1) AS avg_count
+      FROM guest_logs
+      WHERE DATE(recorded_at) = DATE('now')
+        AND pool_uid = 'SSD-4'
+    column: "avg_count"
+    unit_of_measurement: "guests"
+    state_class: "measurement"
+    value_template: "{{ value | float(0) }}"
+
+  # ---- Peak guest count today ----------------------------------------------
+  - name: "Pool Peak Today"
+    db_url: sqlite:////data/guest_logs.db
+    query: >
+      SELECT count
+      FROM guest_logs
+      WHERE DATE(recorded_at) = DATE('now')
+        AND pool_uid = 'SSD-4'
+      ORDER BY count DESC
+      LIMIT 1
+    column: "count"
+    unit_of_measurement: "guests"
+    state_class: "measurement"
+    value_template: "{{ value | int(0) }}"
+
+  # ---- 7-day average -------------------------------------------------------
+  - name: "Pool 7-Day Average"
+    db_url: sqlite:////data/guest_logs.db
+    query: >
+      SELECT ROUND(AVG(count), 1) AS avg_count
+      FROM guest_logs
+      WHERE recorded_at >= DATE('now', '-7 days')
+        AND pool_uid = 'SSD-4'
+    column: "avg_count"
+    unit_of_measurement: "guests"
+    state_class: "measurement"
+    value_template: "{{ value | float(0) }}"
+
+  # ---- 7-day maximum -------------------------------------------------------
+  - name: "Pool 7-Day Max"
+    db_url: sqlite:////data/guest_logs.db
+    query: >
+      SELECT MAX(count) AS max_count
+      FROM guest_logs
+      WHERE recorded_at >= DATE('now', '-7 days')
+        AND pool_uid = 'SSD-4'
+    column: "max_count"
+    unit_of_measurement: "guests"
+    state_class: "measurement"
+    value_template: "{{ value | int(0) }}"
+
+  # ---- 7-day minimum -------------------------------------------------------
+  - name: "Pool 7-Day Min"
+    db_url: sqlite:////data/guest_logs.db
+    query: >
+      SELECT MIN(count) AS min_count
+      FROM guest_logs
+      WHERE recorded_at >= DATE('now', '-7 days')
+        AND pool_uid = 'SSD-4'
+    column: "min_count"
+    unit_of_measurement: "guests"
+    state_class: "measurement"
+    value_template: "{{ value | int(0) }}"
+
+
+# ---------------------------------------------------------------------------
+# 2. REST SENSORS  (uses the FastAPI service, no direct DB access needed)
+#
+# Replace the resource URL with the address where your pool-guest-logger
+# container is reachable.  When both run in the same Docker Compose project
+# you can use the service name: http://pool-guest-logger:8000
+# ---------------------------------------------------------------------------
+rest:
+  # Latest snapshot – exposes count + raw attributes
+  - resource: "http://pool-guest-logger:8000/api/latest"
+    method: GET
+    # Refresh every 5 minutes; align with your logging interval
+    scan_interval: 300
+    sensor:
+      - name: "Pool Guests (REST)"
+        value_template: "{{ value_json.count }}"
+        unit_of_measurement: "guests"
+        state_class: "measurement"
+        json_attributes:
+          - capacity
+          - recorded_at
+          - pool_uid
+
+  # Daily summary (first entry = today)
+  - resource: "http://pool-guest-logger:8000/api/daily?days=1"
+    method: GET
+    scan_interval: 3600  # hourly is enough for daily stats
+    sensor:
+      - name: "Pool Daily Average (REST)"
+        value_template: "{{ value_json[0].average | round(1) }}"
+        unit_of_measurement: "guests"
+        state_class: "measurement"
+
+      - name: "Pool Daily Max (REST)"
+        value_template: "{{ value_json[0].max }}"
+        unit_of_measurement: "guests"
+        state_class: "measurement"
+
+      - name: "Pool Daily Min (REST)"
+        value_template: "{{ value_json[0].min }}"
+        unit_of_measurement: "guests"
+        state_class: "measurement"
+
+
+# ---------------------------------------------------------------------------
+# 3. TEMPLATE SENSORS  (derived metrics, no extra integration needed)
+# ---------------------------------------------------------------------------
+template:
+  - sensor:
+      # Occupancy percentage derived from the REST sensors above
+      - name: "Pool Occupancy (template)"
+        unit_of_measurement: "%"
+        state_class: "measurement"
+        state: >
+          {% set count = states('sensor.pool_guests_rest') | float(-1) %}
+          {% set cap   = state_attr('sensor.pool_guests_rest', 'capacity') | float(0) %}
+          {% if count >= 0 and cap > 0 %}
+            {{ (count / cap * 100) | round(1) }}
+          {% else %}
+            unknown
+          {% endif %}
+
+      # Crowding label: quiet / moderate / busy / full
+      # Uses the SQL occupancy sensor; replace with sensor.pool_occupancy_template
+      # if you are using the REST-based approach instead.
+      - name: "Pool Crowding Level"
+        state: >
+          {% set pct = states('sensor.pool_occupancy') | float(-1) %}
+          {% if pct < 0 %}
+            unknown
+          {% elif pct < 40 %}
+            quiet
+          {% elif pct < 70 %}
+            moderate
+          {% elif pct < 90 %}
+            busy
+          {% else %}
+            full
+          {% endif %}
+
+
+# ---------------------------------------------------------------------------
+# 4. REST COMMAND  (trigger manual logging from HA)
+# ---------------------------------------------------------------------------
+rest_command:
+  pool_guest_log:
+    url: "http://pool-guest-logger:8000/api/log"
+    method: post

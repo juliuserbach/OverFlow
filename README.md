@@ -84,70 +84,95 @@ This project provides a small service to fetch, store, and visualize the number 
 
 ## Home Assistant Integration
 
-- **Trigger logging on a schedule**
-  1. Define a `rest_command` (e.g. in `configuration.yaml` under the top-level `rest_command:` key, or in a package file) that POSTs to the API:
+Full documentation and ready-to-use configuration examples live in
+[`homeassistant/README.md`](homeassistant/README.md).
 
-     ```yaml
-     rest_command:
-       pool_guest_log:
-         url: "http://127.0.0.1:8000/api/log"
-         method: post
-     ```
+### Quick start
 
-  2. Create an automation that runs every _n_ minutes (adjust `/15` as needed):
+Two integration approaches are available – use one or both:
 
-     ```yaml
-     # Place under the top-level `automation:` key or in an included automations file.
-     automation:
-       - alias: "Log pool guests every 15 minutes"
-         trigger:
-           - platform: time_pattern
-             minutes: "/15"
-         action:
-           - service: rest_command.pool_guest_log
-     ```
+#### SQL sensors (direct database access)
 
-- **Expose the latest values as sensors**
+Home Assistant's built-in [SQL integration](https://www.home-assistant.io/integrations/sql/)
+can query the SQLite database directly.  Mount the `data/` directory into the
+HA container (see `docker-compose.yml`) and add the following to your
+`configuration.yaml`:
 
-  Add this block under the top-level `rest:` key in your Home Assistant configuration (or equivalent package file). Reload the REST integration or restart HA after saving:
+```yaml
+sql:
+  - name: "Pool Guest Count"
+    db_url: sqlite:////data/guest_logs.db
+    query: >
+      SELECT count FROM guest_logs
+      WHERE pool_uid = 'SSD-4'
+      ORDER BY recorded_at DESC LIMIT 1
+    column: "count"
+    unit_of_measurement: "guests"
+    state_class: "measurement"
+```
 
-  ```yaml
-  rest:
-    - resource: "http://127.0.0.1:8000/api/latest"
-      method: GET
-      scan_interval: 300  # seconds
-      sensor:
-        name: "Pool Guests"
+`state_class: "measurement"` enables Home Assistant's **long-term statistics**
+so historical data is retained even after the recorder purges raw history, and
+the `statistics-graph` Lovelace card works out of the box.
+
+See [`homeassistant/configuration.yaml.example`](homeassistant/configuration.yaml.example)
+for the full set of sensors (occupancy %, today's average, peak, 7-day stats).
+
+#### REST sensors (API-based)
+
+If HA cannot access the database file directly, poll the FastAPI endpoints instead:
+
+```yaml
+rest:
+  - resource: "http://pool-guest-logger:8000/api/latest"
+    scan_interval: 300
+    sensor:
+      - name: "Pool Guests"
         value_template: "{{ value_json.count }}"
         unit_of_measurement: "guests"
-        json_attributes:
-          - capacity
-          - recorded_at
-  ```
+        state_class: "measurement"
+```
 
-- **Add a Lovelace visualization**
-  - Native history graph:
+#### Schedule logging from HA
 
-    ```yaml
-    type: history-graph
-    entities:
-      - sensor.pool_guests
-    hours_to_show: 24
-    refresh_interval: 60
-    ```
+```yaml
+rest_command:
+  pool_guest_log:
+    url: "http://pool-guest-logger:8000/api/log"
+    method: post
 
-  - (Optional) [ApexCharts](https://github.com/RomRider/apexcharts-card) card for more control:
+automation:
+  - alias: "Log pool guests every 10 minutes"
+    trigger:
+      - platform: time_pattern
+        minutes: "/10"
+    action:
+      - service: rest_command.pool_guest_log
+```
 
-    ```yaml
-    type: custom:apexcharts-card
-    graph_span: 24h
-    update_interval: 5min
-    series:
-      - entity: sensor.pool_guests
-        name: Gäste
-    ```
+See [`homeassistant/automations.yaml.example`](homeassistant/automations.yaml.example)
+for occupancy alerts and quiet-time notifications.
 
-- Embed the built-in dashboard as an iframe using the [Webpage card](https://www.home-assistant.io/lovelace/iframe/) pointed at the FastAPI URL if you prefer the project’s UI.
+#### Dashboard
+
+```yaml
+type: statistics-graph
+title: Guest Count – This Week
+entities:
+  - sensor.pool_guest_count
+days_to_show: 7
+period: day
+stat_types: [mean, max, min]
+```
+
+See [`homeassistant/lovelace-card.yaml.example`](homeassistant/lovelace-card.yaml.example)
+for gauge cards, history graphs, and a Markdown summary card.
+
+#### Running both services with Docker Compose
+
+Uncomment the `homeassistant` service block in `docker-compose.yml` to run
+Home Assistant alongside the pool logger.  The database is mounted read-only
+into the HA container to prevent SQLite locking issues.
 
 ## Testing
 

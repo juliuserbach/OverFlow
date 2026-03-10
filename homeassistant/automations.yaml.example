@@ -1,0 +1,108 @@
+# Home Assistant automations example for OverFlow – Pool Guest Logger
+#
+# Copy the relevant automations into your automations.yaml file or paste them
+# into the UI automation editor (Settings → Automations).
+#
+# Adjust entity names, thresholds, and notification targets to match your
+# setup.
+
+# ---------------------------------------------------------------------------
+# 1. SCHEDULED LOGGING
+#    Triggers the pool-guest-logger API every 10 minutes to scrape and store
+#    the latest guest count.  Requires the rest_command defined in
+#    configuration.yaml.example.
+# ---------------------------------------------------------------------------
+- id: "pool_log_schedule"
+  alias: "Log pool guests every 10 minutes"
+  description: >
+    Calls the OverFlow API to fetch the current guest count from the
+    official website and persist it in the SQLite database.
+  trigger:
+    - platform: time_pattern
+      # Fire at :00, :10, :20, :30, :40, :50 of every hour
+      minutes: "/10"
+  condition: []
+  action:
+    - service: rest_command.pool_guest_log
+  mode: single
+
+# ---------------------------------------------------------------------------
+# 2. HIGH-OCCUPANCY NOTIFICATION
+#    Sends a push notification when the pool is getting crowded (≥ 80 %).
+# ---------------------------------------------------------------------------
+- id: "pool_high_occupancy_alert"
+  alias: "Alert – pool is getting busy"
+  description: >
+    Notifies when pool occupancy reaches 80 % or more.
+  trigger:
+    - platform: numeric_state
+      # Use sensor.pool_occupancy for SQL approach, or
+      # sensor.pool_occupancy_template for the REST-based approach.
+      entity_id: sensor.pool_occupancy
+      above: 80
+  condition:
+    # Only alert between opening hours (adjust to your pool's schedule)
+    - condition: time
+      after: "06:00:00"
+      before: "22:00:00"
+  action:
+    - service: notify.notify
+      data:
+        title: "🏊 Pool is getting busy"
+        message: >
+          Pool occupancy is now {{ states('sensor.pool_occupancy') }} %.
+          There are {{ states('sensor.pool_guest_count') }} guests
+          (capacity {{ state_attr('sensor.pool_guests_rest', 'capacity') }}).
+  mode: single
+
+# ---------------------------------------------------------------------------
+# 3. GOOD-TIME-TO-VISIT NOTIFICATION
+#    Notifies when the pool is quiet (< 40 % occupancy) during the day so
+#    you know it's a good time to go for a swim.
+# ---------------------------------------------------------------------------
+- id: "pool_quiet_alert"
+  alias: "Alert – great time to visit the pool"
+  description: >
+    Notifies when pool occupancy drops below 40 % during daytime hours.
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.pool_occupancy
+      below: 40
+  condition:
+    - condition: time
+      after: "08:00:00"
+      before: "20:00:00"
+    # Don't spam: require at least 1 hour between repeat notifications
+    - condition: template
+      value_template: >
+        {{ (as_timestamp(now()) - as_timestamp(
+              states.sensor.pool_occupancy.last_changed)) > 3600 }}
+  action:
+    - service: notify.notify
+      data:
+        title: "🏊 Great time to visit!"
+        message: >
+          The pool is quiet right now – only {{ states('sensor.pool_occupancy') }} %
+          occupancy ({{ states('sensor.pool_guest_count') }} guests).
+  mode: single
+
+# ---------------------------------------------------------------------------
+# 4. FULL-POOL ALERT
+#    Fires when occupancy reaches 95 % (pool may close entries soon).
+# ---------------------------------------------------------------------------
+- id: "pool_full_alert"
+  alias: "Alert – pool is nearly full"
+  description: >
+    Critical alert when pool occupancy reaches 95 % or more.
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.pool_occupancy
+      above: 95
+  action:
+    - service: notify.notify
+      data:
+        title: "🚫 Pool is nearly full!"
+        message: >
+          Pool occupancy is {{ states('sensor.pool_occupancy') }} %.
+          Entry may be restricted soon.
+  mode: single
