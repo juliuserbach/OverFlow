@@ -1,0 +1,118 @@
+# Home Assistant Lovelace dashboard card examples for OverFlow
+#
+# Paste these cards into the raw YAML editor of a Lovelace dashboard
+# (Edit dashboard → Add card → Manual card).
+#
+# Adjust entity names to match the sensors you created in
+# configuration.yaml.example.
+
+# ---------------------------------------------------------------------------
+# 1. ENTITIES CARD – quick overview
+# ---------------------------------------------------------------------------
+type: entities
+title: Pool Status
+entities:
+  - entity: sensor.pool_guest_count
+    name: Current guests
+    icon: mdi:pool
+  - entity: sensor.pool_capacity
+    name: Total capacity
+    icon: mdi:account-group
+  - entity: sensor.pool_occupancy
+    name: Occupancy
+    icon: mdi:percent
+  - entity: sensor.pool_crowding_level
+    name: Crowding level
+    icon: mdi:gauge
+  - entity: sensor.pool_average_today
+    name: Average today
+    icon: mdi:chart-line
+  - entity: sensor.pool_peak_today
+    name: Peak today
+    icon: mdi:chart-bar
+
+
+# ---------------------------------------------------------------------------
+# 2. GAUGE CARD – visual occupancy meter
+# ---------------------------------------------------------------------------
+type: gauge
+title: Pool Occupancy
+entity: sensor.pool_occupancy
+unit: "%"
+min: 0
+max: 100
+needle: true
+severity:
+  green: 0
+  yellow: 60
+  red: 85
+
+
+# ---------------------------------------------------------------------------
+# 3. HISTORY GRAPH – guest count over the last 24 hours
+# ---------------------------------------------------------------------------
+type: history-graph
+title: Guest Count – Last 24 h
+entities:
+  - entity: sensor.pool_guest_count
+    name: Guests
+hours_to_show: 24
+refresh_interval: 300
+
+
+# ---------------------------------------------------------------------------
+# 4. STATISTICS GRAPH – long-term view (requires state_class: measurement)
+# ---------------------------------------------------------------------------
+type: statistics-graph
+title: Guest Count – This Week
+entities:
+  - sensor.pool_guest_count
+days_to_show: 7
+period: day
+stat_types:
+  - mean
+  - max
+  - min
+
+
+# ---------------------------------------------------------------------------
+# 5. MARKDOWN CARD – human-readable summary
+#
+# Uses the SQL sensor (sensor.pool_guest_count) for the count and the REST
+# sensor (sensor.pool_guests_rest) for the capacity attribute.  Adjust entity
+# names to match whichever sensors you have configured.
+# ---------------------------------------------------------------------------
+type: markdown
+title: Pool Summary
+content: >
+  **Current guests:** {{ states('sensor.pool_guest_count') }}
+  of {{ state_attr('sensor.pool_guests_rest', 'capacity') | default('?') }}
+  ({{ states('sensor.pool_occupancy') }} %)
+
+  **Today** – avg {{ states('sensor.pool_average_today') }},
+  peak {{ states('sensor.pool_peak_today') }} guests
+
+  **7-day** – avg {{ states('sensor.pool_7_day_average') }},
+  max {{ states('sensor.pool_7_day_max') }},
+  min {{ states('sensor.pool_7_day_min') }}
+
+  *Last updated: {{ state_attr('sensor.pool_guest_count', 'recorded_at') | default('unknown') }}*
+
+
+# ---------------------------------------------------------------------------
+# 6. OPTIONAL – ApexCharts card (requires the apexcharts-card HACS integration)
+#    https://github.com/RomRider/apexcharts-card
+# ---------------------------------------------------------------------------
+type: custom:apexcharts-card
+graph_span: 24h
+update_interval: 5min
+header:
+  title: Pool Guests (24 h)
+  show: true
+series:
+  - entity: sensor.pool_guest_count
+    name: Guests
+    color: "#0288d1"
+    type: line
+    stroke_width: 2
+    fill_raw: zero

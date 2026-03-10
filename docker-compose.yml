@@ -10,5 +10,41 @@ services:
       - "8000:8000"
     environment:
       - POOL_LOGGER_LOG_LEVEL=INFO
+      # Path inside the container where the SQLite database is stored.
+      # Change POOL_LOGGER_DB if you use a different filename.
+      - POOL_LOGGER_DB=/data/guest_logs.db
     volumes:
       - ./data:/data
+    networks:
+      - pool-network
+
+  # ---------------------------------------------------------------------------
+  # Optional: Uncomment to run Home Assistant alongside the pool logger.
+  #
+  # The database volume is mounted read-only (:ro) to prevent SQLite locking
+  # issues – the pool logger is the sole writer.
+  #
+  # After starting, open http://localhost:8123 to complete the HA onboarding.
+  # Copy homeassistant/configuration.yaml.example into homeassistant/config/
+  # and adjust the pool_uid and paths as described in homeassistant/README.md.
+  # ---------------------------------------------------------------------------
+  # homeassistant:
+  #   image: ghcr.io/home-assistant/home-assistant:stable
+  #   container_name: homeassistant
+  #   restart: unless-stopped
+  #   privileged: true
+  #   environment:
+  #     - TZ=Europe/Zurich
+  #   volumes:
+  #     - ./homeassistant/config:/config
+  #     - ./data:/data:ro  # Read-only access to the pool database
+  #   ports:
+  #     - "8123:8123"
+  #   networks:
+  #     - pool-network
+  #   depends_on:
+  #     - pool-guest-logger
+
+networks:
+  pool-network:
+    driver: bridge
