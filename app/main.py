@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -44,9 +45,16 @@ async def api_latest(pool: str | None = None, session=Depends(get_session)):
 
 
 @app.get("/api/history", response_model=list[GuestLogSchema])
-async def api_history(limit: int = 100, pool: str | None = None, session=Depends(get_session)):
-    limit = max(1, min(limit, 1000))
-    return crud.list_entries(session, limit=limit, pool_uid=pool)
+async def api_history(
+    limit: int = 100,
+    offset: int = 0,
+    before: dt.datetime | None = None,
+    pool: str | None = None,
+    session=Depends(get_session),
+):
+    limit = max(1, min(limit, 10000))
+    offset = max(0, offset)
+    return crud.list_entries(session, limit=limit, offset=offset, before=before, pool_uid=pool)
 
 
 @app.get("/api/daily", response_model=list[DailySummarySchema])

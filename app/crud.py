@@ -36,11 +36,31 @@ def get_latest_for_pool(session: Session, *, pool_uid: str) -> GuestLog | None:
     return session.scalar(stmt)
 
 
-def list_entries(session: Session, *, limit: int = 100, pool_uid: str | None = None) -> list[GuestLog]:
+def list_entries(
+    session: Session,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    before: dt.datetime | None = None,
+    pool_uid: str | None = None,
+) -> list[GuestLog]:
+    """Return log entries ordered newest-first.
+
+    Args:
+        limit: Maximum number of rows to return.
+        offset: Number of rows to skip (simple offset-based pagination).
+            When combined with ``before``, the offset is applied after the
+            cursor filter — use one strategy at a time for predictable results.
+        before: Datetime cursor — only entries recorded strictly before this
+            timestamp are returned (cursor-based pagination).
+        pool_uid: Filter to a specific pool when provided.
+    """
     stmt = select(GuestLog)
     if pool_uid is not None:
         stmt = stmt.where(GuestLog.pool_uid == pool_uid)
-    stmt = stmt.order_by(GuestLog.recorded_at.desc()).limit(limit)
+    if before is not None:
+        stmt = stmt.where(GuestLog.recorded_at < before)
+    stmt = stmt.order_by(GuestLog.recorded_at.desc()).offset(offset).limit(limit)
     return list(session.scalars(stmt))
 
 
