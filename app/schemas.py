@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 
 class GuestLogSchema(BaseModel):
+    id: int
     recorded_at: dt.datetime
     count: int
     capacity: int | None
